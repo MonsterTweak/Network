@@ -1172,7 +1172,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
     }
     end{
     write-output "SUMMARY saved to $summaryDir\SUMMARY_$hostname "
-    $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft
+    $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft -AutoSize
     $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft > "$summaryPath"
     
     
@@ -1185,7 +1185,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 ### Usage: Test-TlsConnection -fqdn "example.com" -port 443 -proxyUrl "http://proxyserver:port"
 
 # Example using multiple endpoints (only one port can be specified for all enpoints, for now, if multiple endoints are specified)
-#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com","login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
+Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com","login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
 
 
 # Example using single endpoint and proxy
@@ -1195,5 +1195,5 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 #Test-TlsConnection "login.microsoftonline.com" -port 443
 
 # Base example
-#Test-TlsConnection "example.com"
+#Test-TlsConnection "microsoft.com"
 
