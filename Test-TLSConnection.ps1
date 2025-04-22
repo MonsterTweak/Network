@@ -23,9 +23,6 @@
 		Run the script to test connectivitiy and specify a proxy to use:
 		.\Test-TlsConnection.ps1 "login.microsoft.com" -proxyUrl "http://yourproxy:port"
 
-	.EXAMPLE
-		Run the script to test connectivity and specify fqdn, port,:
-		.\Generate-Microsoft-Support-Logs.ps1 -fqdn "login.microsoft.com" -port 443
 	
 	.OUTPUTS
 		A folder containing log files and diagnostic information. By default, the folder is created in the script's current directory or at `C:\temp\Test-TLSConnection-logs\$fqdn' and 'C:\temp\Test-TLSConnection-logs\$fqdn\certs'.
