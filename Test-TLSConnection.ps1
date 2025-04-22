@@ -1,5 +1,5 @@
 ## ##########################################################################
-## Created by Robert Janes    Last Modified 22 April 2025
+## Created by Robert Janes    Last Modified 2 April 2025
 ##
 ## Beta version 1.00
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
@@ -913,7 +913,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         $summary.TCPSuccess=$initialTCPConnection -or $initialProxyTCPConnection
         $summary.TLSSuccess=$ConnectionResults.ConnectionSuccessfull 
        
-        $summary.IPs=$ipAddresses
+        $summary.IPs = $remoteIP
         $summaryList += $summary
 
        
@@ -1003,7 +1003,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
     catch {
             $summary.TCPSuccess = $initialTCPConnection -or $initialProxyTCPConnection
             $summary.TLSSuccess = $ConnectionResults.ConnectionSuccessfull
-            $summary.IPs = $ipAddresses
+            $summary.IPs = $remoteIP
             
         if ($_ -match "SSPI Failed") {
 
@@ -1167,14 +1167,11 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         if ($webClient) {
             $webClient.Dispose()
         }
-        if ($searcher) { #used to be $entry rather than searcher - verify 
-            $searcher.Dispose()
-        }      
     }
     }
     }
     end{
-    write-output "SUMMARY saved to $summaryDir\SUMMARY.txt:"
+    write-output "SUMMARY saved to $summaryDir\SUMMARY_$hostname "
     $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft
     $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft > "$summaryPath"
     
@@ -1184,9 +1181,19 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 
 
+
 ### Usage: Test-TlsConnection -fqdn "example.com" -port 443 -proxyUrl "http://proxyserver:port"
 
+# Example using multiple endpoints (only one port can be specified for all enpoints, for now, if multiple endoints are specified)
+#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com","login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
 
 
+# Example using single endpoint and proxy
 #Test-TlsConnection "gbl.his.arc.azure.com" #-proxyUrl "http://10.10.10.99:3128"
-#Test-TlsConnection "login.microsoftonline.com"
+
+# Example using 
+#Test-TlsConnection "login.microsoftonline.com" -port 443
+
+# Base example
+#Test-TlsConnection "example.com"
+
