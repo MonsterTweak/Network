@@ -1,7 +1,7 @@
-## #########################################################
-## Created by Robert Janes    Last Modified 19 March 2025
+## ##########################################################################
+## Created by Robert Janes    Last Modified 22 April 2025
 ##
-## Beta version 0.99
+## Beta version 1.00
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
 
 <#
@@ -38,30 +38,39 @@
 # When using proxy, revocation check output is incorrect as it does not currently use the proxy specified.  Ignore revocation warnings and only pay attention to the CRL connection checks.
 # Does not check for certificate pinning.
 #>
-<#
-[CmdletBinding()]
-param (
-    [parameter(ValueFromPipeline=$true,ValueFromPipelineByPropertyName=$true,Mandatory=$true,HelpMessage="Enter the FQDN or IP of the endpoint to test")]
-    [string]$fqdn,
-    [int]$port = 443,
-    [string]$proxyUrl = $null,
-    [Boolean]$startedByPs1 = $false
-)
-#>
 
 function Test-TlsConnection {
-    #[CmdletBinding()]
+    [CmdletBinding()]
     param (
         [parameter(ValueFromPipeline=$true,ValueFromPipelineByPropertyName=$true,Mandatory=$true,HelpMessage="Enter the FQDN or IP of the endpoint to test")]
-        [string]$fqdn,
+        [string[]]$fqdnlist,
         [int]$port = 443,
         [string]$proxyUrl = $null
     )
+
+
+    begin{
+        $summaryList = @()
+        $os = Get-CimInstance Win32_OperatingSystem
+        $hostname = $env:COMPUTERNAME    
+    }
+    process{
+    Foreach ($fqdn in $fqdnlist){
+    
     # Get OS information
-    $os = Get-CimInstance Win32_OperatingSystem
+    
+
+     $summary = new-object -TypeName psobject -Property @{
+        FQDN       = [String]@()
+        PORT       = [String]@()
+        TCPSuccess = [boolean]@()
+        TLSSuccess = [boolean]@()
+        IPs        = [String]@()  
+    }
+    $summary.FQDN=$fqdn
+    $summary.PORT=$port
 
     #initialize variables:
-    $entry=""
     # Remove protocol portion of URL (http or https) if used 
     $fqdn = $fqdn -replace '^https?://', ''
     # Create a custom object to display fundamental information
@@ -75,11 +84,13 @@ function Test-TlsConnection {
         IsMissingIssuer                   = $null
         IsChainExpired                    = $null    
     }
+    #Set TLS initally to false - will change to $true if connection is successful
+    $ConnectionResults.ConnectionSuccessfull = $false
 
     #Get environment details
     try {
         $isDomainJoined = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
-        Write-Verbose "This computer is joined to the domain: $($domain.Name)"
+        Write-Verbose "This computer is joined to the domain: $($isDomainJoined.Name)"
     }
     catch {
         Write-Verbose "Computer is NOT domain joined"
@@ -118,8 +129,9 @@ function Test-TlsConnection {
     #$currentDate = (Get-Date).ToString("MMM-dd-yyyy")
 
     # Log directory
-    $logDir = "C:\temp\Test-TLSConnection-logs\$fqdn"
-    $certPath = "C:\temp\Test-TLSConnection-logs\$fqdn\Certs"
+    $summaryDir = "C:\MS_logs\Test-TLSConnection"
+    $logDir = "C:\MS_logs\Test-TLSConnection\$fqdn"
+    $certPath = "C:\MS_logs\Test-TLSConnection\$fqdn\Certs"
 
     # Ensure the directory exists, create if it does not
     if (!(Test-Path -Path $logDir)) {
@@ -131,12 +143,13 @@ function Test-TlsConnection {
     # Create the log file name
     $logFileName = "generalinfo-$fqdn-log-$(Get-Date -Format 'MMM-dd-yyyy-hh-mm-tt').txt"
     $logFailuresName = "identified-issue-$fqdn-log-$(Get-Date -Format 'MMM-dd-yyyy-hh-mm-tt').txt"
-    $logConsoleOutputName = "Console-Output.txt"
+    $summaryFileName = "SUMMARY_$hostname.txt"
 
     # Define the full path for the log file (customize the directory as needed)
     $logFilePath = "$logdir\$logFileName"
     $logFailuresPath = "$logdir\$logFailuresName"
     $logConsoleOutputPath = "$logconsoleoutputname\$logConsoleOutputName"
+    $summaryPath = "$summaryDir\$summaryFileName"
 
     # Output Current time to the log file.
     @"
@@ -157,7 +170,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         Write-Warning "Console Output will not be logged (transcripting is not supported in older versions of ISE).  Use PowerShell Console (Not ISE)" 
     }
     else {
-        Start-Transcript -Path "$logDir\ConsolOutput.txt"
+        $null = Start-Transcript -Path "$logDir\ConsolOutput.txt"
     }
     Write-Output "`n############ Connecting to $fqdn ############`n------------------------------------------------------------"
       
@@ -168,13 +181,20 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 
     ##LOGGING
-    Write-Output "`nTesting connectivity on:`n`n $fqdn" | Add-Content $logFilePath -Encoding utf8
+    Write-Output "`nTesting connectivity on: $fqdn" | Add-Content $logFilePath -Encoding UTF8
     try {
 
         # Output Is Proxy Being used or not:
         if ($proxyUrl) {
             Write-Output "`nProxy has been explicitly set: $proxyUrl"
         }
+
+
+        #Get DNS Servers Configured on the local machine -> add to general log
+        $DnsServersConfiguredLocally = Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.ServerAddresses -ne $null} | Select-Object InterfaceAlias, @{Name="Using DNS Servers"; Expression={$_.ServerAddresses -join ", "}} |ft #| Add-Content $logFilePath -Encoding UTF8
+        $DnsServersConfiguredLocally > $logFilePath
+        #$DnsServersConfiguredLocally = Get-DnsClientServerAddress -AddressFamily IPv4 | where $_.ServerAddresses -neq $null | ft
+
 
         # Resolve fqdn to possible IP addresses (Uses DNS)
         $ipAddresses = [System.Net.Dns]::GetHostAddresses($fqdn) | Select-Object -ExpandProperty IPAddressToString
@@ -186,13 +206,13 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             
         if ($ErrorDns -match "DNS name does not exist") {
             $ErrorDns | Out-String | Add-Content $logFailuresPath -Encoding UTF8
-            write-output "DNS server did not resolve $fqdn  <- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
+            write-output "DNS server could not resolve $fqdn  <- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
         }
         if ($ErrorDns -match "No DNS servers configured for local system") {
-            write-output "Cannot communicate to a DNS server.  Check network settings"
+            write-output "Cannot communicate to a DNS server.  Check local network settings"
         }
-        #Resolve-DnsName $fqdn | Out-String | Add-Content $logFilePath -Encoding UTF8
-
+        #$DnsList = Resolve-DnsName $fqdn 
+        #$DNSList
         # Create a TCP client
         $tcpClient = New-Object System.Net.Sockets.TcpClient
   
@@ -520,7 +540,9 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             $cert = $chainElement.Certificate
            
             write-output "Cert $($counter): $($cert.subject) | Thumbprint: $($cert.thumbprint)" | Format-List
+   ############         
 
+            # Check if CRL URL is Cached and has 'next' date.  The nextdate is the date in which the certificate chain will no longer be trusted if revocation is forced.  Chain will gain trust again once new CRL with new nextdate is cached (requires network to the crl locations)..
             $CertutilResponse = $null
             $CertutilResponse = certutil -urlfetch -v -verify $certPath\$($cert.Thumbprint).cer
             
@@ -528,22 +550,20 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             $CRLNextUpdateList += $CertutilResponse -match "next"
             
             # Add the full certutil response to log (may not need/want to log all of this)
-            $CertutilResponse >> $logFilePath
+            #$CertutilResponse >> $logFilePath
      
+            write-output "Cert $counter Dump info (URLs, NextUpdate (date cached certificates will be required to update), Errors):" >> $logFilePath
             # Output Certutil response (important items like the URL or errors)
             foreach ($line in $CertutilResponse) {
                 if ($line -match "Error retrieving" -or $line -like "*http://*" -or $line -match "A certificate chain" -or $line -match "next") {
                     Write-Verbose "$line"
-                    Write-Output "$line" | Out-String | Add-Content $logFailuresPath -Encoding UTF8
+                    Write-Output "$line" | Out-String | Add-Content $logFilePath -Encoding UTF8
                 }
             }
             
-
-            $crldetails = certutil -dump C:\temp\certs\DigiCertGlobalRootG2.crl
-
             # If there is a partial chain status, this means there is a missing issuer.  Show missing issuer (The issuer of this certificate is not accessible/installed)
 
-            write-output "`nIndividual Certificate Status:" >> $logFilePath
+            #write-output "`nIndividual Certificate Status:" >> $logFilePath
             $chainElement.ChainElementStatus >> $logFilePath
             $isCertRevoked = $chainElement.ChainElementStatus.Status -contains "Revoked"
             $isCertExpired = $chainElement.ChainElementStatus.Status -contains "NotTimeValid"
@@ -565,9 +585,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             # Get Certificate Revocation List from Each Certificate in the certitifate chain
             $CRLsList = $cert.Extensions | Where-Object { $_.Oid.FriendlyName -like 'CRL Distribution Point*' }
             $CRTDownloadList = $cert.Extensions | Where-Object { $_.Oid.FriendlyName -like 'Authority Information Acces*' }
-            #"CRTDownloadList:"
-            #$CRTDownloadList
-            #$cert | gm
+        
     
             if ($CRLsList) {
                 $CRLsList = $CRLsList.format($true)
@@ -582,7 +600,6 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
                 }
                 }
-                
             
      ""
             
@@ -623,6 +640,8 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         $CRLurlsarray = $CRLurlsarray | Sort-Object -unique
         #$CRLurlsarray
         
+        Write-Output "`n`n" >> $logFilePath
+        Write-Output "Certificate (CRT and Revocation List (CRL) download location URLs:" >> $logFilePath
         $CRLurlsarray | ForEach-Object { write-verbose "CRL URL IS: $($_)" }
         $CRLurlsarray | ForEach-Object { Write-Output "CRL URL IS: $($_)" >> $logFilePath }
         #$CRLurlsarray.count
@@ -697,7 +716,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 }
             }
         }
-        ## ALPHA functionality - CRL VIA LDAP
+        ## ALPHA TESTING CRL VIA LDAP
         if ($crlLdap) {
             $crlLdap | ForEach-Object {
                 try {
@@ -891,7 +910,11 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
   
         
-
+        $summary.TCPSuccess=$initialTCPConnection -or $initialProxyTCPConnection
+        $summary.TLSSuccess=$ConnectionResults.ConnectionSuccessfull 
+       
+        $summary.IPs=$ipAddresses
+        $summaryList += $summary
 
        
         ###
@@ -978,14 +1001,19 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
     } 
     
     catch {
-
+            $summary.TCPSuccess = $initialTCPConnection -or $initialProxyTCPConnection
+            $summary.TLSSuccess = $ConnectionResults.ConnectionSuccessfull
+            $summary.IPs = $ipAddresses
+            
         if ($_ -match "SSPI Failed") {
 
             $os = Get-CimInstance Win32_OperatingSystem
             Write-Output "`nTLS Connection: Failed`n"
             Write-Warning "SSPI Failed (cipher suite or TLS version issue)." #VERIFY Server 2012R2 WITH MISSING Ciphers causes this and add the requirements to this line. 
             Write-Output "SSPI Failed - Server may throw this error if it cannot trust the connection (cipher suite or TLS version)." | Add-Content $logFailuresPath -Encoding utf8
-            $required2012KB = Get-HotFix | Where-Object -Property HotFixID -match 2919355  | Format-List | Out-String | Add-Content $logFailuresPath -Encoding utf8
+            Get-HotFix | Where-Object -Property HotFixID -match 2919355  | Format-List | Out-String | Add-Content $logFailuresPath -Encoding utf8
+            $required2012KB = Get-HotFix | Where-Object -Property HotFixID -match 2919355
+            
             #Add a check for 2012 r2 ciphers and link the KB update to get relevant ciphers for 2012r2 here.
             if (($PSVersionTable.PSVersion -le [Version]"5.0") -and ($os.Caption -like "*Server 2012 R2*")) {
                 Write-Output "Cipher Suites Enabled on this machine:" | Out-String | Add-Content $logFailuresPath -Encoding utf8
@@ -1000,8 +1028,15 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                     Write-Output $log | Out-String | Add-Content $logFailuresPath -Encoding utf8
                 }
                 elseif ($required2012KB) {
-                    Write-Output "KB2919355 is installed`n1) Check enabled ciphers by re-running this script and use the -cipherCheck " + '$true'
+                    Write-Output "KB2919355 is installed.`n"
+                    #Write-Output "KB2919355 is installed`n1) Check enabled ciphers by re-running this script and use the -cipherCheck " '$true'
                     Write-Output "Possible Solution: SSPI errors indicate that there may be a cipher suite error/issue.  Verify cipher suites enabled on the local machine and compare to results when checking $fqdn via https://www.ssllabs.com/ssltest/"
+                    "Error:"
+                    $_.exception
+                    Write-Output "First inner exception:"
+                    $_.Exception.InnerException
+                    Write-Output "Second Inner Exception:"
+                    $PSItem.Exception.InnerException.InnerException
                 }
                 
             }
@@ -1017,6 +1052,9 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             }
             if (!$tcpClient.Connected -and $initialTCPConnection) {
             Write-Output "TCP Connection was interrupted"
+            
+            $summary.IPs = $tcpClient.Client.RemoteEndPoint
+            
             }
 
             # If initial TCP was successful, but the connection was closed during TLS handshake, then the firewall will show 'allow' on tcp but denied the rest of the connection.  This would be Firewall configuration issue.
@@ -1026,11 +1064,18 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 write-output "--Potential Remediation(fix)-- Should this connection be using a proxy to connect?  If so, use the proxy argument ( -proxyUrl 'http://yourproxy.com:portnumber') and run the script again.`n"
             }
 
-            $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS | Out-Null
-            
-            if ($ErrorDns -match "DNS name does not exist") {
+            #$ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS | Out-Null
+            if ($ErrorDns -match "DNS name does not exist" -and $_ -match "A connection attempt failed because the connected party did not properly respond") {
                 $ErrorDns | Out-String | Add-Content $logFailuresPath -Encoding UTF8
-                write-output "DNS server did not resolve $fqdn  <-- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
+                write-output "`n$fqdn did not respond to the connection request, this endpoint may not be configured to accept TCP or TLS connections, may be offline, or does not exist.`n"
+                #write-output "DNS server could not resolve $fqdn  <-- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
+            }
+            elseif ($ErrorDns -match "DNS name does not exist") {
+                $ErrorDns | Out-String | Add-Content $logFailuresPath -Encoding UTF8
+                write-output "DNS server could not resolve $fqdn  <-- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
+            }
+            if ($_ -match "No such host is known"){
+                Write-Output "`n$fqdn <- No such host is known.  DNS server failed to resolve the hostname to an IP address, typically due to a nonexistent domain, DNS misconfiguration, or network issues.`n"
             }
             if ($ErrorDns -match "No DNS servers configured for local system") {
                 write-output "Cannot reach a DNS server.  Check network settings"
@@ -1039,7 +1084,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 Write-Warning "Initial TCP Connection Failed!`n1) Is the HostName or IP,and port correct/valid?`n2) Check if local network is connected`n3) Verify if any network blockers are preventing the connection to $fqdn"
                 write-warning "TLS Session: No attempt to create TLS session because initial TCP connection failed."
             }
-            $ResolvedDNS = Resolve-DnsName $fqdn
+            #$ResolvedDNS = Resolve-DnsName $fqdn
             if ($_ -match "no data of the requested type was found") {
                 #Write-Output "Check ciphers - do cipher suites enabled on this machine match the endpoint's ($fqdn) allowed cipher suites?) <-- Can check using ssllabs.com"
                 write-output "DNS RESOLVED $fqdn to:"
@@ -1095,16 +1140,17 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         write-output ""
         Write-Verbose -Verbose "Log files and certs saved to: $logdir\"
         Write-Output "############ END $fqdn ############`n`n`n`n"
+        $summaryList+=$summary
          
     }
-
+    
     finally {
          # Check if the console is running in older versions of ISE or not.  If it is, then the console output will not be logged.
         if (($PSVersionTable.PSVersion -le [Version]"5.0") -and ($host.Name -match "ISE")) {
-            Write-Warning "Console Output will not be logged (transcripting is not supported in older versions of ISE).  If this is Server 2012R2 or older, use the PowerShell Console (Not ISE) to get console output.`n -> Since you are using ISE, PLEASE COPY THE OUTPUT ABOVE MANUALLY AND SAVE IT TO A TEXT FILE IN THE LOG DIRECTORY BELOW!" 
+            Write-Warning "Console Output will not be logged automatically (transcripting is not supported in older versions of ISE).  Please copy the output to a .txt file if providing output to support" 
         }
         else {
-            Stop-Transcript
+            $null = Stop-Transcript
         }
         # Close the SSL stream and TCP client
         if ($sslStream) {
@@ -1125,12 +1171,20 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             $searcher.Dispose()
         }      
     }
+    }
+    }
+    end{
+    write-output "SUMMARY saved to $summaryDir\SUMMARY.txt:"
+    $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft
+    $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft > "$summaryPath"
+    
+    
+    }
 }
 
 
 
 ### Usage: Test-TlsConnection -fqdn "example.com" -port 443 -proxyUrl "http://proxyserver:port"
-
 
 
 
