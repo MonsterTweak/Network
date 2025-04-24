@@ -1,7 +1,7 @@
 ## ##########################################################################
-## Created by Robert Janes    Last Modified 2 April 2025
+## Created by Robert Janes    Last Modified 23 April 2025
 ##
-## Beta version 1.00
+## Beta version 1.01
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
 
 <#
@@ -23,6 +23,10 @@
 		Run the script to test connectivitiy and specify a proxy to use:
 		.\Test-TlsConnection.ps1 "login.microsoft.com" -proxyUrl "http://yourproxy:port"
 
+    .EXAMPLE
+		Run the script to test connectivity to multiple endpoints (can only specify one port per group, for now):
+		.\Test-TlsConnection.ps1 -fqdn "login.microsoftonline.com","gbl.his.arc.azure.com","github.com"
+
 	
 	.OUTPUTS
 		A folder containing log files and diagnostic information. By default, the folder is created in the script's current directory or at `C:\temp\Test-TLSConnection-logs\$fqdn' and 'C:\temp\Test-TLSConnection-logs\$fqdn\certs'.
@@ -31,8 +35,7 @@
 		Beta script.  Sample size tested is fairly low so bugs and constructive feedback should be provided.
 
 ##KNOWN Limitations###
-# When using proxy, tcp connection displayed is the proxy url and port.  
-# When using proxy, revocation check output is incorrect as it does not currently use the proxy specified.  Ignore revocation warnings and only pay attention to the CRL connection checks.
+# When using proxy, tcp connection displayed is the proxy url and port.
 # Does not check for certificate pinning.
 #>
 
@@ -1123,7 +1126,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         #$_
         write-output $_ | Add-Content $logFailuresPath -Encoding utf8
 
-        ## LOG SPECIFIC PROBLEMS
+        ## Check if cert is expired and comment.
         if (!$isCertTrusted -and $IsChainExpired) {
             write-warning "The Endpoint |$fqdn| is using an expired certificate which will need to be replaced on the (web server's)/(endpoint's) side before this endpoint can be trusted."
             write-output "The Endpoint |$fqdn| is using an expired certificate which will need to be replaced on the (web server's)/(endpoint's) side before this endpoint can be trusted." | Add-Content $logFailuresPath -Encoding utf8
@@ -1169,10 +1172,8 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
     }
     end{
     write-output "SUMMARY saved to $summaryDir\SUMMARY_$hostname "
-    $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft -AutoSize
-    $summaryList | select FQDN, PORT, IPs, TCPSuccess, TLSSuccess | ft > "$summaryPath"
-    
-    
+    $summaryList | Select-Object FQDN, PORT, IPs, TCPSuccess, TLSSuccess | Format-Table -AutoSize
+    $summaryList | Select-Object FQDN, PORT, IPs, TCPSuccess, TLSSuccess | Format-Table > "$summaryPath"
     }
 }
 
@@ -1181,16 +1182,16 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 ### Usage: Test-TlsConnection -fqdn "example.com" -port 443 -proxyUrl "http://proxyserver:port"
 
-# Example using multiple endpoints (only one port can be specified for all enpoints, for now, if multiple endoints are specified)
-Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com","login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
+## EXAMPLE using multiple endpoints (only one port can be specified for all enpoints, for now, if multiple endoints are specified)
+#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
 
+## EXAMPLE using single endpoint and explicitly specifying proxy
+#Test-TlsConnection "gbl.his.arc.azure.com" -proxyUrl "http://10.10.10.99:3128"
 
-# Example using single endpoint and proxy
-#Test-TlsConnection "gbl.his.arc.azure.com" #-proxyUrl "http://10.10.10.99:3128"
-
-# Example using 
+## EXAMPLE using single endpoint and specifying port
 #Test-TlsConnection "login.microsoftonline.com" -port 443
 
 # Base example
 #Test-TlsConnection "microsoft.com"
+
 
