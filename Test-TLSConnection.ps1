@@ -1,7 +1,7 @@
-## ##########################################################################
-## Created by Robert Janes    Last Modified 23 April 2025
+## ########################################################### Check if you have latest version! https://raw.githubusercontent.com/MonsterTweak/Network/refs/heads/main/Test-TLSConnection.ps1
+## Created by Robert Janes    Last Modified 30 April 2025
 ##
-## Beta version 1.01
+## Beta version 1.02
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
 
 <#
@@ -55,35 +55,43 @@ function Test-TlsConnection {
         $hostname = $env:COMPUTERNAME    
     }
     process{
-    Foreach ($fqdn in $fqdnlist){
+        Foreach ($fqdn in $fqdnlist){
+            # Get OS information
     
-    # Get OS information
-    
+            #initialize variables:
+            $initialTCPConnection = $false
+            $initialProxyTCPConnection = $false
+            $proxyStream = $null
+            $CrlURLs = @()
+            $CrtURLs = @()
+            $CRLNextUpdateList = @()
+            $CrlLdap = @()
+            $CrlURLsarray = @()
+            $CrtURLsarray = @()
+            $summary = new-object -TypeName psobject -Property @{
+                FQDN       = [String]@()
+                PORT       = [String]@()
+                TCPSuccess = [boolean]@()
+                TLSSuccess = [boolean]@()
+                IPs        = [String]@()  
+            }
+            $summary.FQDN=$fqdn
+            $summary.PORT=$port
 
-     $summary = new-object -TypeName psobject -Property @{
-        FQDN       = [String]@()
-        PORT       = [String]@()
-        TCPSuccess = [boolean]@()
-        TLSSuccess = [boolean]@()
-        IPs        = [String]@()  
-    }
-    $summary.FQDN=$fqdn
-    $summary.PORT=$port
-
-    #initialize variables:
-    # Remove protocol portion of URL (http or https) if used 
-    $fqdn = $fqdn -replace '^https?://', ''
-    # Create a custom object to display fundamental information
-    $ConnectionResults = New-Object PSObject -Property @{
-        ConnectionSuccessfull             = $null
-        ConnectionIFRevocationCheckForced = $null
-        IsRevocationStatusUnknown         = $null
-        IsRevoked                         = $null
-        IsOfflineRevocation               = $null
-        IsPartialChain                    = $null
-        IsMissingIssuer                   = $null
-        IsChainExpired                    = $null    
-    }
+       
+        # Remove protocol portion of URL (http or https) if used 
+            $fqdn = $fqdn -replace '^https?://', ''
+        # Create a custom object to display fundamental information
+            $ConnectionResults = New-Object PSObject -Property @{
+            ConnectionSuccessfull             = $null
+            ConnectionIFRevocationCheckForced = $null
+            IsRevocationStatusUnknown         = $null
+            IsRevoked                         = $null
+            IsOfflineRevocation               = $null
+            IsPartialChain                    = $null
+            IsMissingIssuer                   = $null
+            IsChainExpired                    = $null    
+        }
     #Set TLS initally to false - will change to $true if connection is successful
     $ConnectionResults.ConnectionSuccessfull = $false
 
@@ -125,7 +133,6 @@ function Test-TlsConnection {
 
 
     # Set up log files
-    # Generate the current date in the desired format
     #$currentDate = (Get-Date).ToString("MMM-dd-yyyy")
 
     # Log directory
@@ -984,7 +991,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             write-output "It's likely that the proxy is unable to access the endpoints required to verifiy revocation download and cache the certificates.  Make sure any network blockers (firewalls, etc.) whitelist the CRL and CRT URLs listed above."
         }
         If (!$TopLevelCertIsInstalled -and $IsPartialChain -and !$CRLurlsarray -and $crlLdap) {
-            Write-Output "--Potential Remediation(fix)-- Certificate's root authority is not trusted on this computer - If you trust $fqdn, Manually obtain and install the domain's Root CA certificate/s to the local computer account's 'Trusted Root Certification Authorities' store. Then try to run this script again."
+            Write-Output "`n`n--Potential Remediation(fix)--`n`nThe Certificate's root authority is not trusted on this computer`n1) If you trust $fqdn, Manually obtain and install the domain's Root CA certificate/s to the local computer account's 'Trusted Root Certification Authorities' store. Then try to run this script again."
         }
         If ($TopLevelCertIsInstalled -and !$existsIntermediate -and ($CertCount -ge 3) -and $IsPartialChain) {
             write-output "Root Certificate is installed`nIntermediate certificate is NOT installed`nConnection may still be successful, because the root certificate is trusted, but some scenarios require intermediate cerficates to be installed.  If you are having issues connecting, install the intermediate certificate listed and try script again"
@@ -1064,7 +1071,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 write-output "--Potential Remediation(fix)-- Should this connection be using a proxy to connect?  If so, use the proxy argument ( -proxyUrl 'http://yourproxy.com:portnumber') and run the script again.`n"
             }
 
-            #$ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS | Out-Null
+            $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS
             if ($ErrorDns -match "DNS name does not exist" -and $_ -match "A connection attempt failed because the connected party did not properly respond") {
                 $ErrorDns | Out-String | Add-Content $logFailuresPath -Encoding UTF8
                 write-output "`n$fqdn did not respond to the connection request, this endpoint may not be configured to accept TCP or TLS connections, may be offline, or does not exist.`n"
@@ -1075,7 +1082,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 write-output "DNS server could not resolve $fqdn  <-- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
             }
             if ($_ -match "No such host is known"){
-                Write-Output "`n$fqdn <- No such host is known.  DNS server failed to resolve the hostname to an IP address, typically due to a nonexistent domain, DNS misconfiguration, or network issues.`n"
+                Write-Output "`n$fqdn <- No such host is known.`n`n--Potential Remediation(fix)--- `n`nDNS server failed to resolve the hostname to an IP address, typically due to a nonexistent domain, DNS misconfiguration, or network issues.`n1) Verify that the hostname is spelled correctly`n2) Verify DNS server can resolve the hostname`n3) Check network connectivity`n"
             }
             if ($ErrorDns -match "No DNS servers configured for local system") {
                 write-output "Cannot reach a DNS server.  Check network settings"
@@ -1102,7 +1109,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 }
             }
             elseif (($ResolvedDNS -match 0.0.0.0) -and ($ResolvedDNS) -and (!$initialProxyTCPConnection -and !$initialTCPConnection)) {
-                Write-Output "`n--Potential Remediation(fix)--DNS resolved $fqdn IP to: 0.0.0.0 - Resolving DNS name to 0.0.0.0 IP address usually indicates `n1) No network connection `n2) Network blocking (firewall or proxy blocker) and/or DNS blackhole configured.  `n`nPotential Solutions(Fixes): `n1) Check if this local machine is connected to a network `n2) Allow/Whitelist $fqdn on all network blockers (Firewall, Proxy, and any other blocker) and try running the script again. `n3) Check hosts file (C:\Windows\System32\Drivers\etc\hosts) `nExample: Is $fqdn listed in the hosts file? If so, is the IP correct?"`n
+                Write-Output "`n`n--Potential Remediation(fix)--`nDNS resolved $fqdn IP to: 0.0.0.0 - `n`nResolving DNS name to 0.0.0.0 IP address usually indicates `n1) Network blocking (DNS Blackhole/Sinkhole, firewall, or proxy blocker)`n   example of DNS blackhole: piHole, Adblock, or other DNS blackhole/sinkhole solution`n3) No network connection`n  `n`nPotential Solutions(Fixes): `n1) Check if this local machine is connected to a network `n2) Allow/Whitelist $fqdn on all network blockers (Firewall, Proxy, DNS blackhole, and any other blocker) and try running the script again. `n3) Check hosts file (C:\Windows\System32\Drivers\etc\hosts) `nExample: Is $fqdn listed in the hosts file? If so, is the IP correct?"`n
             } 
           
               
@@ -1180,18 +1187,17 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 
 
-### Usage: Test-TlsConnection -fqdn "example.com" -port 443 -proxyUrl "http://proxyserver:port"
-
-## EXAMPLE using multiple endpoints (only one port can be specified for all enpoints, for now, if multiple endoints are specified)
-#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
+### USAGE: Test-TlsConnection -fqdn "example.com" -port 443 -proxyUrl "http://proxyserver:port"
 
 ## EXAMPLE using single endpoint and explicitly specifying proxy
-#Test-TlsConnection "gbl.his.arc.azure.com" -proxyUrl "http://10.10.10.99:3128"
+#Test-TlsConnection "gbl.his.arc.azure.com" -proxyUrl "http://proxyserver:port"
 
 ## EXAMPLE using single endpoint and specifying port
 #Test-TlsConnection "login.microsoftonline.com" -port 443
 
-# Base example
+# EXAMPLE (base case)
 #Test-TlsConnection "microsoft.com"
 
+## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
+#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
 
