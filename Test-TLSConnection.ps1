@@ -1,7 +1,7 @@
 ## ########################################################### Check if you have latest version! https://raw.githubusercontent.com/MonsterTweak/Network/refs/heads/main/Test-TLSConnection.ps1
-## Created by Robert Janes    Last Modified 30 April 2025
+## Created by Robert Janes    Last Modified 11 May 2025
 ##
-## Beta version 1.02
+## Beta version 1.04
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
 
 <#
@@ -117,12 +117,11 @@ function Test-TlsConnection {
     }
     $localSettings.LocalInternetOptionsProxy = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyServer -ErrorAction SilentlyContinue
     $localSettings.LocalInternetOptionsProxyOverride = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyOverride -ErrorAction SilentlyContinue
-    $localSettings.localSystemProxy = netsh winhttp show proxy
-    $localSettings.proxyHttpsEnvironmentVariable = $env:HTTPS_PROXY
-    $localSettings.proxyHttpEnvironmentVariable = $env:HTTPS_PROXY
+    $localSettings.LocalSystemProxy = netsh winhttp show proxy
+    $localSettings.ProxyHttpsEnvironmentVariable = $env:HTTPS_PROXY
+    $localSettings.ProxyHttpEnvironmentVariable = $env:HTTPS_PROXY
     $localSettings.NoProxyEnvironmentVariable = $env:NO_PROXY
 
-    
     #To test ouptut for proxy
     <#
     #$localSettings
@@ -148,8 +147,8 @@ function Test-TlsConnection {
         New-Item -Path $certPath -ItemType Directory | Out-Null
     }
     # Create the log file name
-    $logFileName = "generalinfo-$fqdn-log-$(Get-Date -Format 'MMM-dd-yyyy-hh-mm-tt').txt"
-    $logFailuresName = "identified-issue-$fqdn-log-$(Get-Date -Format 'MMM-dd-yyyy-hh-mm-tt').txt"
+    $logFileName = "generalinfo_$fqdn.txt"
+    $logFailuresName = "identified-issue_$fqdn.txt"
     $summaryFileName = "SUMMARY_$hostname.txt"
 
     # Define the full path for the log file (customize the directory as needed)
@@ -159,18 +158,19 @@ function Test-TlsConnection {
     $summaryPath = "$summaryDir\$summaryFileName"
 
     # Output Current time to the log file.
-    @"
+@"
 Local Machine Time (12-hour): $(Get-Date -Format 'MMM dd yyyy hh:mm tt')
 UTC Time (12-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy hh:mm tt'))
 UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm'))
 "@ | Out-File -FilePath $logFilePath -Encoding UTF8 -Append
-
+    Write-Output "`nTesting connectivity on: $fqdn" | Add-Content $logFilePath -Encoding UTF8
     # Get Time Sync source
     $TimeSyncSource = w32tm /query /source
+    $TimeSyncRegistry = Get-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\W32Time\Parameters" -Name NtpServer
+    $TimeSyncRegistry = $TimeSyncRegistry.NtpServer
+    
 
-
-    # Writing to the log file
-    ##LOGGING
+    #LOGGING
     "Log started at: $(Get-Date)`n" | Add-Content $logFilePath -Encoding UTF8
    # Check if the console is running in older versions of ISE or not.  If it is, then the console output will not be logged.
     if (($PSVersionTable.PSVersion -le [Version]"5.0") -and ($host.Name -match "ISE")) {
@@ -184,11 +184,14 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
     # Output the file name to the console for verification
   
     Write-Verbose "`nLocal Machine Time Sync Source: $TimeSyncSource`n"
+    #Logging
+    Write-Output "`nLocal Settings:" | Add-Content $logFilePath -Encoding UTF8
+    Write-Output $localSettings | Out-String | Add-Content $logFilePath -Encoding UTF8
     Write-Output "Local Machine Time Sync Source: $TimeSyncSource" | Add-Content $logFilePath -Encoding UTF8
+    
+    
 
-
-    ##LOGGING
-    Write-Output "`nTesting connectivity on: $fqdn" | Add-Content $logFilePath -Encoding UTF8
+    
     try {
 
         # Output Is Proxy Being used or not:
@@ -198,19 +201,26 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 
         #Get DNS Servers Configured on the local machine -> add to general log
-        $DnsServersConfiguredLocally = Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.ServerAddresses -ne $null} | Select-Object InterfaceAlias, @{Name="Using DNS Servers"; Expression={$_.ServerAddresses -join ", "}} |ft #| Add-Content $logFilePath -Encoding UTF8
-        $DnsServersConfiguredLocally > $logFilePath
+        $DnsServersConfiguredLocally = Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.ServerAddresses -ne $null} | Select-Object InterfaceAlias, @{Name="Using DNS Servers"; Expression={$_.ServerAddresses -join ", "}} | Format-Table #| Add-Content $logFilePath -Encoding UTF8
+        $DnsServersConfiguredLocally >> $logFilePath
         #$DnsServersConfiguredLocally = Get-DnsClientServerAddress -AddressFamily IPv4 | where $_.ServerAddresses -neq $null | ft
 
 
         # Resolve fqdn to possible IP addresses (Uses DNS)
-        $ipAddresses = [System.Net.Dns]::GetHostAddresses($fqdn) | Select-Object -ExpandProperty IPAddressToString
+        if (!$proxyUrl){
+            $ipAddresses = [System.Net.Dns]::GetHostAddresses($fqdn) | Select-Object -ExpandProperty IPAddressToString
+        }
         Write-Output "Resolvable ipv4 IP/s: $ipAddresses"
         ##LOGGING
         Write-Output "Resolvable ipv4 IP/s: $ipAddresses" | Add-Content $logFilePath -Encoding UTF8
         Write-Output "All Resolvable IPS (ipv4 and ipv6)" | Add-Content $logFilePath -Encoding UTF8
+        # If proxy is specified, resolving DNS on local machine may not give same DNS results as the proxy server.
+        if (!$proxyUrl){
         Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS | Out-String | Add-Content $logFilePath -Encoding UTF8
-            
+        } 
+        else {
+            Write-Output "DNS resolution for endpoints occurs on the Proxy server when proxy is used.  If there is an issue, you may need to verify the DNS settings on the proxy server." | Add-Content $logFilePath -Encoding UTF8
+        }   
         if ($ErrorDns -match "DNS name does not exist") {
             $ErrorDns | Out-String | Add-Content $logFailuresPath -Encoding UTF8
             write-output "DNS server could not resolve $fqdn  <- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
@@ -244,7 +254,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         $remoteIP = $remoteEndPoint.Address
         $remotePort = $remoteEndPoint.Port
             if ($tcpClient.Connected) {
-                Write-Output "Initial TCP to proxy connected? $($tcpClient.connected)"
+                Write-Output "Initial TCP connection to proxy server: $($tcpClient.connected)"
                 Write-Output "Port:$remotePort`n"
                 $initialProxyTCPConnection = $true
             }
@@ -436,11 +446,9 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         # Get the last certificate in the chain (the top level / CA certificate) and print it to
         $caCertificate = $chain.ChainElements.Certificate | Select-Object -Last 1
         ##LOGGING
-        Write-Output "Certificate Authority:" | Add-Content $logFilePath -Encoding utf8
+        #Write-Output "Certificate Authority:" | Add-Content $logFilePath -Encoding utf8
         $caCertificate | Format-List | Out-String | Add-Content $logFilePath -Encoding utf8
-        # Are first cert and last cert the same (indicates that no cert chain)
-   
-
+        
         # Check if CA Cert is currently installed on machine:
         # Access the Trusted Root Certification Authorities store
         $trustedRootStore = Get-ChildItem -Path Cert:\LocalMachine\Root
@@ -559,12 +567,12 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             # Add the full certutil response to log (may not need/want to log all of this)
             #$CertutilResponse >> $logFilePath
      
-            write-output "Cert $counter Dump info (URLs, NextUpdate (date cached certificates will be required to update), Errors):" >> $logFilePath
+            #write-output "Cert $counter Dump info (URLs, NextUpdate (date cached certificates will be required to update), Errors):" >> $logFilePath
             # Output Certutil response (important items like the URL or errors)
             foreach ($line in $CertutilResponse) {
                 if ($line -match "Error retrieving" -or $line -like "*http://*" -or $line -match "A certificate chain" -or $line -match "next") {
                     Write-Verbose "$line"
-                    Write-Output "$line" | Out-String | Add-Content $logFilePath -Encoding UTF8
+                    #Write-Output "$line" | Out-String | Add-Content $logFilePath -Encoding UTF8
                 }
             }
             
@@ -647,8 +655,8 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         $CRLurlsarray = $CRLurlsarray | Sort-Object -unique
         #$CRLurlsarray
         
-        Write-Output "`n`n" >> $logFilePath
-        Write-Output "Certificate (CRT and Revocation List (CRL) download location URLs:" >> $logFilePath
+        Write-Output "`n" >> $logFilePath
+        Write-Output "Certificate and revocation list download URLs:" >> $logFilePath
         $CRLurlsarray | ForEach-Object { write-verbose "CRL URL IS: $($_)" }
         $CRLurlsarray | ForEach-Object { Write-Output "CRL URL IS: $($_)" >> $logFilePath }
         #$CRLurlsarray.count
@@ -1031,13 +1039,13 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 if (!$required2012KB) {
                     Write-Output "`nKB2919355 is NOT currently installed - Windows Update KB2919355 is required for 2012R2 to enable relevant/newer TLS 1.2 cipher suites.`n`n1) Install KB2919355`nhttps://www.microsoft.com/en-US/download/details.aspx?id=42334&msockid=1766e8e229ce6891375dfc5f28dd69e9`n  Direct Download Link:`nhttps://download.microsoft.com/download/2/5/6/256CCCFB-5341-4A8D-A277-8A81B21A1E35/Windows8.1-KB2919355-x64.msu`n2) OR check for updates via Windows Update Service and install the latest available updates before trying to connect again"
                     Write-output "KB2919355 is NOT installed - Windows Update KB2919355 is required for 2012R2 to enable current/relevant/newer TLS 1.2 cipher suites.`n1) Install KB2919355: https://www.microsoft.com/en-US/download/details.aspx?id=42334&msockid=1766e8e229ce6891375dfc5f28dd69e9`nDirect Download Link:`nhttps://download.microsoft.com/download/2/5/6/256CCCFB-5341-4A8D-A277-8A81B21A1E35/Windows8.1-KB2919355-x64.msu`n2) Update OS to latest available updates before trying to connect again" | Out-String | Add-Content $logFailuresPath -Encoding utf8
-                    $log = Write-Output "SOLUTION: Install Windows Updates and verify that KB2919355 is installed.  After Updates you will need to reboot for the changes to take effect."
+                    $log = Write-Output "SOLUTION: Install All available security and critical Windows Updates AND verify that KB2919355 is installed.  After Updates you will need to reboot for the changes to take effect."
                     Write-Output $log | Out-String | Add-Content $logFailuresPath -Encoding utf8
                 }
                 elseif ($required2012KB) {
                     Write-Output "KB2919355 is installed.`n"
                     #Write-Output "KB2919355 is installed`n1) Check enabled ciphers by re-running this script and use the -cipherCheck " '$true'
-                    Write-Output "Possible Solution: SSPI errors indicate that there may be a cipher suite error/issue.  Verify cipher suites enabled on the local machine and compare to results when checking $fqdn via https://www.ssllabs.com/ssltest/"
+                    Write-Output "`n--Potential Remediation(fix)--`n1) Install any/all available Windows updates (required to resolve many SSPI/cipher related errors).`n2)Restart Machine.  After updates you will need to reboot for the changes to take effect`n3)SSPI errors indicate that there may be a cipher suite error/issue.  Verify cipher suites enabled on the local machine and compare to results when checking $fqdn via https://www.ssllabs.com/ssltest/"
                     "Error:"
                     $_.exception
                     Write-Output "First inner exception:"
@@ -1049,7 +1057,23 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             }
             
         }  
-        #"Error: $_"
+        
+        if ($_ -match "The handshake failed due to an unexpected packet format" -and $tcpClient.Connected -and $proxyUrl){
+                Write-Output "`nIMPORTANTt: Proxy was specified so DNS resolution is done through the proxy.  Therefore DNS errors are difficult to trace through a proxy - so use deduction to troubleshoot...`n"
+                Write-Output "`nError Detected - Likelyhood of DNS error is high.`n`n---Potential Remediation(fix)--- `nPlease check the following:`n1) Verify that the $fqdn is correct (is it misspelled? does the URL exist?)`n2) Verify that the proxy server can resolve the URL (check from the proxy itself using nslookup, for example: nslookup $fqdn)`n3) Verify that the IP returned/resolved from checking on the proxy server is correct"
+                # Check DNS locally as an extra test - if the machine can resolve the IP of the URL from this machine, then it's more likely that there is a issue on the proxy server regarding DNS (the DNS server the proxy uses may be offline, or further DNS problem).
+                Write-Output "`n`n***EXTRA TEST: Checking local machine DNS (instead of proxy) - can this local machine resolve $fqdn to an IP address?"
+                $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS
+                #$ErrorDns
+                if ($ErrorDns -match "DNS name does not exist"){
+                    Write-Output "RESULT: 'DNS NAME DOES NOT EXIST' <- The DNS server could not resolve the hostname to an IP - the host/URL may not exist."
+                    Write-Output "     --- Verify that the URL is spelled correctly and that it actually exists."
+                }
+                else {
+                    "New Error to code for here.-----------------"
+                }
+        }
+        #$_
         # Did TCP connection fail?
         if (!$tcpClient.Connected) {
             #proxy check for the same occurs earlier so it's not checked here.
@@ -1061,17 +1085,19 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             Write-Output "TCP Connection was interrupted"
             
             $summary.IPs = $tcpClient.Client.RemoteEndPoint
-            
             }
 
+         
             # If initial TCP was successful, but the connection was closed during TLS handshake, then the firewall will show 'allow' on tcp but denied the rest of the connection.  This would be Firewall configuration issue.
             if ($initialTCPConnection) {
                 Write-Output "TCP connection was initially allowed, but the connection was terminated.  This indicates the TLS secure connection was blocked to $fqdn but initial TCP connection was allowed.  Company/User that deployed firewall/proxy (and/or other network blocker) should investigate internally to determine why the TLS connection was blocked from this machine.`n"
                 Write-Output "--Potential Remediation(fix)-- Allow/whitelist the URL '$fqdn' on the firewall and/or other network blockers and try this script again.`n"
                 write-output "--Potential Remediation(fix)-- Should this connection be using a proxy to connect?  If so, use the proxy argument ( -proxyUrl 'http://yourproxy.com:portnumber') and run the script again.`n"
             }
-
-            $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS
+            if (!$proxyUrl){
+                $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS
+            }
+            
             if ($ErrorDns -match "DNS name does not exist" -and $_ -match "A connection attempt failed because the connected party did not properly respond") {
                 $ErrorDns | Out-String | Add-Content $logFailuresPath -Encoding UTF8
                 write-output "`n$fqdn did not respond to the connection request, this endpoint may not be configured to accept TCP or TLS connections, may be offline, or does not exist.`n"
@@ -1082,7 +1108,12 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 write-output "DNS server could not resolve $fqdn  <-- this is normal if an IP address is used rather than a URL and reverse DNS lookup zone is not configured"
             }
             if ($_ -match "No such host is known"){
+                if (!$proxyUrl){
                 Write-Output "`n$fqdn <- No such host is known.`n`n--Potential Remediation(fix)--- `n`nDNS server failed to resolve the hostname to an IP address, typically due to a nonexistent domain, DNS misconfiguration, or network issues.`n1) Verify that the hostname is spelled correctly`n2) Verify DNS server can resolve the hostname`n3) Check network connectivity`n"
+                }
+                elseif ($proxyUrl){
+                Write-Output "`n$fqdn <- No such host is known.`n`n--Potential Remediation(fix)--- `n`nDNS server failed to resolve the hostname to an IP address, typically due to a nonexistent domain, DNS misconfiguration, or network issues.`n1) Verify that the hostname is spelled correctly`n2) Verify the DNS server that the proxy server is using can resolve the hostname`n3) Check network connectivity`n"
+                }
             }
             if ($ErrorDns -match "No DNS servers configured for local system") {
                 write-output "Cannot reach a DNS server.  Check network settings"
@@ -1096,14 +1127,16 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 #Write-Output "Check ciphers - do cipher suites enabled on this machine match the endpoint's ($fqdn) allowed cipher suites?) <-- Can check using ssllabs.com"
                 write-output "DNS RESOLVED $fqdn to:"
                 $ResolvedDns
+                
             }
             ### ADD TODO ### Add hosts file check in the 'if' statement below to see if endpoint is currently in the HOSTS file (and report if so to the logs.  Searching in particular to see if old private IP is still being used, or any incorrect IP).
-            if (($ResolvedDNS -match 0.0.0.0) -and ($ResolvedDNS) -and $proxyUrl -and ($_ -match "forcibly closed")) {
-                #$_ -match "forcibly closed"
-                Write-Output "`n---Potential Remediation(fix)--- `n** The connection was refused by the proxy host or the proxy host does not exist.`n1) Check if this machine is allowed (has permission) to access the proxy AND verify that the proxy can access the URL ($fqdn)`n"
-            }
-            elseif (($ResolvedDNS -match 0.0.0.0) -and ($ResolvedDNS) -and ($_ -match "host has failed to respond")) {
-                Write-Output "Timeout occured.  Is the IP address or fqdn correct?"
+            #if (($ResolvedDns -match 0.0.0.0) -and ($ResolvedDns) -and $proxyUrl -and ($_ -match "forcibly closed")) {
+            #    #$_ -match "forcibly closed"
+            #    
+            #    Write-Output "`n---Potential Remediation(fix)--- `n** The connection was refused by the proxy host or the proxy host does not exist.`n1) Check if this machine is allowed (has permission) to access the proxy AND verify that the proxy can access the URL ($fqdn)`n"
+            #}
+            if (($ResolvedDNS -match 0.0.0.0) -and ($ResolvedDNS) -and ($_ -match "host has failed to respond")) {
+                Write-Output "Timeout occured.  Is the IP address or fqdn and associated port ($port) correct?"
                 if ($proxyUrl){
                     Write-Output "Since a proxy was specified, check if the proxy is reachable and if the proxy can access the URL ($fqdn)"
                 }
@@ -1199,5 +1232,4 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 #Test-TlsConnection "microsoft.com"
 
 ## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
-#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
-
+Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
