@@ -1235,11 +1235,3 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 ## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
 #Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
 
-#Test-TlsConnection  revoked.badssl.com #-proxy "http://10.10.10.99:3128"
-#Test-TlsConnection expired.badssl.com #-proxy "http://10.10.10.99:3128"
-#Test-TlsConnection self-signed.badssl.com
-#Test-TlsConnection untrusted-root.badssl.com
-#Test-TlsConnection pinning-test.badssl.com
-
-test-tlsconnection "agentserviceapi.guestconfiguration.azure.com","global.handler.control.monitor.azure.com", "asdfbsdfs.asdfdffdfdnnnd.com", "10.1.1.111", "untrusted-root.badssl.com", "self-signed.badssl.com","expired.badssl.com", "revoked.badssl.com" #-proxyUrl "http://10.10.10.99:3128"
-
