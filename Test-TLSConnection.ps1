@@ -1,7 +1,7 @@
 ## ########################################################### Check if you have latest version! https://raw.githubusercontent.com/MonsterTweak/Network/refs/heads/main/Test-TLSConnection.ps1
-## Created by Robert Janes    Last Modified 11 May 2025
+## Created by Robert Janes    Last Modified 23 May 2025
 ##
-## Beta version 1.04
+## Beta version 1.05
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
 
 <#
@@ -29,7 +29,7 @@
 
 	
 	.OUTPUTS
-		A folder containing log files and diagnostic information. By default, the folder is created in the script's current directory or at `C:\temp\Test-TLSConnection-logs\$fqdn' and 'C:\temp\Test-TLSConnection-logs\$fqdn\certs'.
+		A folder containing log files and diagnostic information. By default, the folder is created in the script's current directory or at `C:\MS_logs\Test-TLSConnection-logs\$fqdn' and 'C:\MS_logs\Test-TLSConnection-logs\$fqdn\certs'.
 	
 	.NOTES
 		Beta script.  Sample size tested is fairly low so bugs and constructive feedback should be provided.
@@ -511,12 +511,11 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 
         if ($isChainExpired) {
-            #Write-output "Certificate: $($element.Certificate)"
-            write-output "Certificate: $($element.Certificate)" | Add-Content $logFailuresPath -Encoding utf8
-            write-output "!!! EXPIRED CERT !!!" | Add-Content $logFailuresPath -Encoding utf8
-            write-output "" | Add-Content $logFailuresPath -Encoding utf8
-            Write-Verbose "!!! EXPIRED CERTIFICATE CHAIN !!!"
-            #throw "Remote endpoint |$fqdn| Certificate IS EXPIRED: Trust cannot be established"
+
+            if ($chainStatus.StatusInformation -match "not within its validity period when verifying against the current system clock"){
+                "** Certificate is not within its validity period when verifying against the current system clock"
+            }
+        
         }
       
         #TOGGLE
@@ -582,12 +581,12 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             #write-output "`nIndividual Certificate Status:" >> $logFilePath
             $chainElement.ChainElementStatus >> $logFilePath
             $isCertRevoked = $chainElement.ChainElementStatus.Status -contains "Revoked"
-            $isCertExpired = $chainElement.ChainElementStatus.Status -contains "NotTimeValid"
+            $isCertExpired = $chainElement.ChainElementStatus.Status -contains "NotTimeValid" # Certificate can be NotTimeValid for multiple reasons, including system time being incorrect, further checks are done if $isCertExpired is value becomes true.
             if ($isCertRevoked) {
                 Write-Warning "Is Certificate Revoked? $IsCertRevoked"
             }
             if ($isCertExpired) {
-                write-warning "Is Certificate Expired? $isCertExpired"
+                Write-Warning "'Certificate Expired' OR 'System Time Incorrect': $isCertExpired"
             }
 
 
@@ -923,7 +922,12 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         if ($CRLDownloadFailed -and !$isOfflineRecovation -and !$isRevocationStatusUnknown){
             Write-Output "$($CertutilResponse -match "next")"    
         }
-
+        #Verify the chain status time validity - report issue if time is not valid (same check is done using $isChainExpired)
+         if ($chainStatus.StatusInformation -match "not within its validity period when verifying against the current system clock"){
+            write-output "`n---Issue Detected---"
+            Write-output "Certificate is not within its validity period when verifying against the current system clock"
+            write-output "  This is an indication that either `n1) System time is incorrect, `n and/OR `n2) A certificate in the chain is expired."
+        }
   
         
         $summary.TCPSuccess=$initialTCPConnection -or $initialProxyTCPConnection
@@ -952,9 +956,14 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         if ($CRTDownloadFailed -and !$isOfflineRecovation -and !$isRevocationStatusUnknown -and $isCertTrusted -and $TopLevelCertIsInstalled){
             Write-Output "Certificate online download location/s failed connection test.  If you manually install certificates, this is not an issue, but if this is unexpected, verify network blockers (firewall/proxy,etc.) are blocking the URL, and IF you trust $fqdn, consider whitelisting/allowing the URL/s (listed above)."
         }
-    
+       
+        
         If ($IsChainExpired) {
-            write-output "Certificate is expired.  $fqdn will need to replace the certificate before it can/will be properly trusted"
+            Write-Output "`n--Possible Solutions(Fix)--`n1) Verify the date and time on this machine against a proper internet NTP time source.`n   -If the date and time are incorrect even by a small amount authentication issues will occur.`n2) If date/time on this machine are correct, then confirm if a certificate in the certificate chain has an expired certificate on $fqdn is expired.  The remote endpoint will need to replace the certificate before it can be trusted."
+            #write-output "`nSystem Date/Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+            Write-Output "`nSystem Date/Time: $(Get-Date -Format 'yyyy-MM-dd hh:mm:ss tt')"
+            write-output "System Timezone: $(Get-TimeZone)"
+            Write-Output "Certificate Expiry Date: $($certinfo.NotAfter)`n"
         }
         if ($IsPartialChain -and $IsMissingIssuer -and $UntrustedRootWithNoDownloadPath) {
             Write-Output "The root CA certificate is not currently trusted on this local machine. The certificate on $fqdn did not specify the download source for its CA certificate.  If you trust the certificate, you will need to obtain it an manually install it."
@@ -990,7 +999,10 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         }
 
         if (!$TopLevelCertIsInstalled -and $IsPartialChain -and $IsMissingIssuer -and $proxyUrl -and !$crlLdap -and !$CRLDownloadFailed -and !$CRTDownloadFailed) {
-            Write-Output "--The certificate chain for endpoint $fqdn could not be built to a trusted root authority.`n" 
+            if ($isCertExpired){
+                Write-Output "`n`n---Secondary Issue Detected--- (fix above issues first):"
+            }
+            Write-Output "** The certificate chain for endpoint $fqdn could not be built to a trusted root authority.`n" 
            # Write-Output "--Potential Remediation(fix)-- Since you are using a proxy, you can try using the -softProxyFix argument, which will backup current settings then temporarily enable/set internet options proxy, contact endpoint, then change settings to as they were. After you run the script with the -softProxyCertFix argument, proceed to rerun this script without the arguement."
             write-output "--Potential Remediation(fix)-- Enable/Turn on 'internet options' proxy using the proxy settings provided when you ran this script (either internet options or settings -> search for proxy).  Then rerun this script.  If successful, then you will need to leave proxy 'internet options' enabled to update certificate chains.`n*Reason: The certificate download and caching process requires that the applications involved in certificate verification can access the endpoints.  Although those certificate endpoints are accessible when adding the proxy to this script, the application for certificate utilities cannot use the proxy specified in this script to download and cache the certificates.  Therefore, you must set this machine's internet proxy in order for the application to access the certificates (then the application will be able to check and download/cache the certificate)"
             write-output "`nOnce you have set the proxy, rerun this script.  [enable via 'internet options' proxy  or  Start -> Settings -> seacrch for 'Proxy' -> choose Proxy Settings -> Set the proxy "
@@ -1168,7 +1180,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         write-output $_ | Add-Content $logFailuresPath -Encoding utf8
 
         ## Check if cert is expired and comment.
-        if (!$isCertTrusted -and $IsChainExpired) {
+        if (!$isCertTrusted -and $IsChainExpired -and !$proxyUrl) {
             write-warning "The Endpoint |$fqdn| is using an expired certificate which will need to be replaced on the (web server's)/(endpoint's) side before this endpoint can be trusted."
             write-output "The Endpoint |$fqdn| is using an expired certificate which will need to be replaced on the (web server's)/(endpoint's) side before this endpoint can be trusted." | Add-Content $logFailuresPath -Encoding utf8
             #if ($repair){} # REPAIR/FIX STEPS
@@ -1235,3 +1247,11 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 ## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
 #Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
 
+#Test-TlsConnection  revoked.badssl.com #-proxy "http://10.10.10.99:3128"
+#Test-TlsConnection expired.badssl.com #-proxy "http://10.10.10.99:3128"
+#Test-TlsConnection self-signed.badssl.com
+#Test-TlsConnection untrusted-root.badssl.com
+#Test-TlsConnection pinning-test.badssl.com
+
+#test-tlsconnection "agentserviceapi.guestconfiguration.azure.com","global.handler.control.monitor.azure.com", "asdfbsdfs.asdfdffdfdnnnd.com", "10.1.1.111", "untrusted-root.badssl.com", "self-signed.badssl.com","expired.badssl.com", "revoked.badssl.com" #-proxyUrl "http://10.10.10.99:3128"
+test-tlsconnection "agentserviceapi.guestconfiguration.azure.com", "expired.badssl.com" -proxyUrl "http://10.10.10.99:3128"
