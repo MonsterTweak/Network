@@ -1,5 +1,5 @@
 ## ########################################################### Check if you have latest version! https://raw.githubusercontent.com/MonsterTweak/Network/refs/heads/main/Test-TLSConnection.ps1
-## Created by Robert Janes    Last Modified 23 May 2025
+## Created by Robert Janes    Last Modified 17 July 2025
 ##
 ## Beta version 1.05
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
@@ -52,7 +52,8 @@ function Test-TlsConnection {
     begin{
         $summaryList = @()
         $os = Get-CimInstance Win32_OperatingSystem
-        $hostname = $env:COMPUTERNAME    
+        $hostname = $env:COMPUTERNAME
+          
     }
     process{
         Foreach ($fqdn in $fqdnlist){
@@ -68,6 +69,12 @@ function Test-TlsConnection {
             $CrlLdap = @()
             $CrlURLsarray = @()
             $CrtURLsarray = @()
+            $CRLUrlsFailedList = @()
+            $CRTUrlsFailedList = @()
+            $CRLurlsarraytemp = @()
+            $Crturlsarraytemp = @()
+            
+            
             $summary = new-object -TypeName psobject -Property @{
                 FQDN       = [String]@()
                 PORT       = [String]@()
@@ -79,6 +86,7 @@ function Test-TlsConnection {
             $summary.PORT=$port
             $summary.IPs = $null
             $remoteIP = $null
+            
        
         # Remove protocol portion of URL (http or https) if used 
             $fqdn = $fqdn -replace '^https?://', ''
@@ -95,7 +103,7 @@ function Test-TlsConnection {
         }
     #Set TLS initally to false - will change to $true if connection is successful
     $ConnectionResults.ConnectionSuccessfull = $false
-
+    
     #Get environment details
     try {
         $isDomainJoined = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
@@ -110,20 +118,21 @@ function Test-TlsConnection {
     #Get and Check local proxy configuration information
     $localSettings = New-Object psobject -Property @{
         LocalInternetOptionsProxy = $null
+        LocalInternetOptionsProxyEnabled = $null
         LocalInternetOptionsProxyOverride = $null
         LocalSystemProxy = $null
         ProxyHttpsEnvironmentVariable = $null
         ProxyHttpEnvironmentVariable = $null
         NoProxyEnvironmentVariable = $null
     }
-    $localSettings.LocalInternetOptionsProxy = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyServer -ErrorAction SilentlyContinue
-    $localSettings.LocalInternetOptionsProxyOverride = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyOverride -ErrorAction SilentlyContinue
+    $localSettings.LocalInternetOptionsProxy = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyServer -ErrorAction SilentlyContinue).ProxyServer
+    $localSettings.LocalInternetOptionsProxyOverride = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyOverride -ErrorAction SilentlyContinue).ProxyOverride
     $localSettings.LocalSystemProxy = netsh winhttp show proxy
     $localSettings.ProxyHttpsEnvironmentVariable = $env:HTTPS_PROXY
     $localSettings.ProxyHttpEnvironmentVariable = $env:HTTPS_PROXY
     $localSettings.NoProxyEnvironmentVariable = $env:NO_PROXY
-
-    #To test ouptut for proxy
+    $localSettings.LocalInternetOptionsProxyEnabled = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyEnable).ProxyEnable
+    #Test ouptut for localsettings
     <#
     #$localSettings
     #or
@@ -338,7 +347,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         Write-Output "Attempting to connect using TLS Version: $TLSVersion`n"
         #Create Certificate Object from the stream
         $certInfo = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList $sslStream.RemoteCertificate
-        
+       
         # Export certificate to file 
         Export-Certificate -Cert $certInfo -FilePath "$certPath\$fqdn.cer" -Type CERT | Out-Null
         
@@ -365,7 +374,6 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         #debug
         #Write-Verbose $chainStatusList.tostring()
        
-        
         # Count how many certificates are in the chain
         $CertCount = $chain.ChainElements.Count
         # Get Chain health/Status
@@ -375,7 +383,6 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         $isOfflineRecovation = $chainStatus.Status -contains "OfflineRevocation"
         $isChainExpired = $chainStatus.Status -contains "NotTimeValid"
         $isUntrustedRoot = $chainStatus.Status -contains "UntrustedRoot"   
-
         # GET CERT AND MISSING ISSUER IF BROKEN CHAIN
 
         if ($isRevocationStatusUnknown) {
@@ -401,7 +408,6 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         #Write-Output "Certificate expired? $isChainExpired"
         #Write-Output "Revocation status Unknown? $IsRevocationStatusUnknown"    
         #Write-Output "Revocation offline? $IsOfflineRecovation"
-      
         $isMissingIssuer = $false
         If ($IsPartialChain) {
             $isMissingIssuer = $true
@@ -548,22 +554,25 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         write-output "`ncertificate chain status:" >> $logFilePath
         write-output "CERT-CHAIN STATUS:" | Add-Content $logFilePath -Encoding UTF8
         $chainStatus | Out-String | Add-Content $logFilePath -Encoding UTF8
-
-        # Get each certificate in the chain to get the CRLs and test connectivity     
+        $counter = 0
+        # Get each certificate in the chain to get the CRLs and test connectivity
+        
+        
+        
+             
         foreach ($chainElement in $chain.ChainElements) { 
             $counter ++   
             $cert = $chainElement.Certificate
+            
+            
            
             write-output "Cert $($counter): $($cert.subject) | Thumbprint: $($cert.thumbprint)" | Format-List
    ############         
-
             # Check if CRL URL is Cached and has 'next' date.  The nextdate is the date in which the certificate chain will no longer be trusted if revocation is forced.  Chain will gain trust again once new CRL with new nextdate is cached (requires network to the crl locations)..
             $CertutilResponse = $null
             $CertutilResponse = certutil -urlfetch -v -verify $certPath\$($cert.Thumbprint).cer
-            
             # Get the "next date" from CRL urls fetched from the loacl cached cert dump, 
             $CRLNextUpdateList += $CertutilResponse -match "next"
-            
             # Add the full certutil response to log (may not need/want to log all of this)
             #$CertutilResponse >> $logFilePath
      
@@ -575,7 +584,14 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                     #Write-Output "$line" | Out-String | Add-Content $logFilePath -Encoding UTF8
                 }
             }
-            
+            foreach ($line in $CertutilResponse) {
+                if ($line -match "ERROR_WINHTTP_TIMEOUT") {
+                    Write-Verbose "$line"
+                    $CertUtilCRLDownloadFailed = $true
+                }
+            }
+
+
             # If there is a partial chain status, this means there is a missing issuer.  Show missing issuer (The issuer of this certificate is not accessible/installed)
 
             #write-output "`nIndividual Certificate Status:" >> $logFilePath
@@ -692,6 +708,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         if ($CRLurlsarray) {
             $CRLurlsarray | ForEach-Object {
                 try {
+                    
                     $currentCrlUrl = $_
                     ## Download the .crl file from the URL (will be in form http://xxx.com/name.crl
                     Write-Verbose "Downloading CRL from: $_"
@@ -714,7 +731,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
                 }
                 catch {
-        
+                        
                     if (!$CRLurlsarray) {
                         Write-Warning "There are no internet accessible CRL (Certificate Revocation Lists) configured for this certificate."
                         #export-certificate -Cert $caCertificate  -FilePath "$certPath\Certificate_Authority_Cert-For_$fqdn.cer" -Type CERT | Out-Null
@@ -725,7 +742,9 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                         Write-verbose "Either allow/whitelist the above URL through network blocker, and/or verify the associated certificate is trusted on the local machine."
                         $CRLDownloadFailed = $true
                         $CRLDownloadSucceeded = $false
-                        [String[]]$CRLUrlsFailedList += $currentCrlUrl
+                        [String[]]$CRLUrlsFailedList += $currentCrlUrl                      
+                        $currentCrlUrl = $null
+                        
                         #$CRLUrlsFailedList
                     }
                 }
@@ -733,6 +752,8 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         }
         ## ALPHA TESTING CRL VIA LDAP
         if ($crlLdap) {
+
+        $CRLLdapFailedList = $null
             $crlLdap | ForEach-Object {
                 try {
                     ## Verify LDAP connectivity to the CRL
@@ -855,6 +876,8 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 }
             }
         }
+
+
         If (!$CRLurlsarray -and $IsMissingIssuer) {
             write-warning "No available path/location provided in certificate to download missing certificate issuer"
             $UntrustedRootWithNoDownloadPath = $true
@@ -926,7 +949,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
          if ($chainStatus.StatusInformation -match "not within its validity period when verifying against the current system clock"){
             write-output "`n---Issue Detected---"
             Write-output "Certificate is not within its validity period when verifying against the current system clock"
-            write-output "  This is an indication that either `n1) System time is incorrect, `n and/OR `n2) A certificate in the chain is expired."
+            write-output "  This is an indication that either `n1) A certificate in the chain (see above) is expired, `n and/OR `n2) The Machine's System time may be incorrect."
         }
   
         
@@ -935,7 +958,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
        
         $summary.IPs = $remoteIP
         $summaryList += $summary
-
+        
        
         ###
         ### 
@@ -946,20 +969,29 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
         #### RECOMMENDATIONS
         $CRLNextUpdateList = $CRLNextUpdateList | Select-Object -Unique
         Write-Output "`n`n#### RECOMMENDATION(s) #### `n"
-        if ($ConnectionResults.ConnectionSuccessfull -and $connectionResults.ConnectionIFRevocationCheckForced){
+        if ($ConnectionResults.ConnectionSuccessfull -and $connectionResults.ConnectionIFRevocationCheckForced -and !$CertUtilCRLDownloadFailed){
             Write-Output "No recommendation required.  Connection Successful and certificate chain is fully trusted."
         }
-        if ($CRLDownloadFailed -and !$isOfflineRecovation -and !$isRevocationStatusUnknown -and $isCertTrusted) {
+        if (!$CRLDownloadFailed -and $CertUtilCRLDownloadFailed -and $proxyUrl -and $isCertTrusted){
+            write-warning "Certificate Trust is only relying on cached data."
+            Write-Output "-Downloading CRLs were successful via specified proxy, However, the local machine does not use the specified proxy to install or verify certificates.  This means that the local certificate services cannot download the certificate or check the 'certificate revocation list' (CRL) to verify the revocation status of the certificate."
             Write-Output "-Revocation check relying on cached CRLs | Cannot access online revocation list |  When cached revocation list timer is up, connections that require revocation checks may no longer work."
-            Write-Output "-Cached CRLs require refresh on -> $CRLNextUpdateList.  After the 'NextUpdate' date, if the download fails, connections requiring forced revocation checks may no longer work thus the certificate chain will lose 'fully' trusted status."
+            Write-Output "-Cached CRLs require refresh on -> `n$CRLNextUpdateList.  `n   After the 'NextUpdate' date, if the download fails, connections requiring forced revocation checks may no longer work thus the certificate chain will lose 'fully' trusted status."
+
+            Write-Output "`n--Possible Solutions(Fix)--`n1) Since you specified a proxy to run this script, enabling the same proxy information on the local machine on 'internet options' may resolve this issue.  `nDepending on your version of Windows, you should enable proxy either from the start -> Settings -> Proxy -> Proxy Settings ||OR|| from Control Panel -> internet options -> Connections tab -> Configure proxy settings.`nRun the script again once proxy is enabled to update certificates and cache."
+        }
+        if ($CRLDownloadFailed -and !$isOfflineRecovation -and !$isRevocationStatusUnknown -and $isCertTrusted) {
+            Write-Output "`n---NOTE---`n-Revocation check is currently relying on cached CRLs | Cannot access online revocation list |  When cached revocation list timer is up, connections that require revocation checks may no longer work."
+            Write-Output "-Cached CRLs will require to be updated on -> `n $CRLNextUpdateList. `n   After the 'NextUpdate' date, if the download fails, connections requiring forced revocation checks may no longer work thus the certificate chain will lose 'fully' trusted status."
         }
         if ($CRTDownloadFailed -and !$isOfflineRecovation -and !$isRevocationStatusUnknown -and $isCertTrusted -and $TopLevelCertIsInstalled){
-            Write-Output "Certificate online download location/s failed connection test.  If you manually install certificates, this is not an issue, but if this is unexpected, verify network blockers (firewall/proxy,etc.) are blocking the URL, and IF you trust $fqdn, consider whitelisting/allowing the URL/s (listed above)."
+            Write-Output "`nCertificate online download location/s failed connection test.  If you manually install certificates, this is not an issue, but if this is unexpected, verify network blockers (firewall/proxy,etc.) are blocking the URL, and IF you trust $fqdn, consider whitelisting/allowing the URL/s (listed above).`n"
         }
        
         
         If ($IsChainExpired) {
             Write-Output "`n--Possible Solutions(Fix)--`n1) Verify the date and time on this machine against a proper internet NTP time source.`n   -If the date and time are incorrect even by a small amount authentication issues will occur.`n2) If date/time on this machine are correct, then confirm if a certificate in the certificate chain has an expired certificate on $fqdn is expired.  The remote endpoint will need to replace the certificate before it can be trusted."
+            Write-Output "Assistance:"
             #write-output "`nSystem Date/Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
             Write-Output "`nSystem Date/Time: $(Get-Date -Format 'yyyy-MM-dd hh:mm:ss tt')"
             write-output "System Timezone: $(Get-TimeZone)"
@@ -990,7 +1022,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             Write-Output ""
         }
         if (($CRLDownloadFailed -or $CRLLdapFailedList -or $CRLUrlsFailedList) -and $TopLevelCertIsInstalled -and !$IsPartialChain -and !$crlLdap) {
-            write-output "If the connection is working through your application, then no changes are currently required. Not all applications force revocation checks.  However, if your application forces revocation checks, then you will have connection issues to $fqdn.  Please allow/whitelist the URLs listed below on any network blockers (such as firewall and proxy):`n  $CRLUrlsFailedList`n  $CRTUrlsFailedList`n"
+            write-output "If the connection is working through your application, then no changes are currently required. Not all applications force revocation checks.  However, if your application forces revocation checks, then you will have connection issues to $fqdn.  `n`n--- Please allow/whitelist the URLs listed below on any network blockers (such as firewall and proxy):`nCRL ENDPOINTS:`n  $CRLUrlsFailedList`nAND CERT ENDPOINTS`n  $CRTUrlsFailedList`n"
             write-output " --Potential Remediation(fix)-- Machines that do not allow certification revocation checks (because of network blocking or otherwise) may be a security concern for you or your company.  Allow connections to verify certificate revocation endpoints, when possible, to avoid allowing insecure certificates to continue running if they have been revoked."
         }
         elseif ($crlLdap -and !$isDomainJoined -and !$TopLevelCertIsInstalled) { Write-Output "This machine is not domain joined and the certificate revocation check requires LDAP in order to verify revocation status." }
@@ -1018,15 +1050,17 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             write-output "Root Certificate is installed`nIntermediate certificate is NOT installed`nConnection may still be successful, because the root certificate is trusted, but some scenarios require intermediate cerficates to be installed.  If you are having issues connecting, install the intermediate certificate listed and try script again"
         }
         If ($TopLevelCertIsInstalled -and !$isCertTrusted -and !$isMissingIssuer -and $isRevocationStatusUnknown -and !$isChainExpired -and $proxyUrl) {
-            Write-Output "Connections to $fqdn without revocation checks will be successful because the root CA certificate is installed locally in this computer account's certificate store.  However, this computer cannot currently verify if the certificate has been revoked - which may be considered a security concern."
+            Write-Output "Connections to $fqdn without revocation checks will be successful because the root CA certificate is installed locally in this computer account's certificate store.  ** However, this computer cannot currently verify if the certificate has been revoked - which may be considered a security concern."
             Write-Output ""
             write-output "--Potential Remediation(fix)-- Since you specified a proxy to run this script, enabling the same proxy information in your 'internet options' may resolve this issue.  `nDepending on your version of Windows, you should enable proxy either from the start -> Settings OR from Control Panel -> internet options -> Connections tab -> Configure proxy settings.`nRun the script again once proxy is enabled to update certificates and cache."
         }
+
         write-output ""
       
         Write-Verbose -Verbose "Log files and certs saved to: $logdir\"
         Write-Output "`n############ END $fqdn ############`n`n`n"
     } 
+
     
     catch {
             $summary.TCPSuccess = $initialTCPConnection -or $initialProxyTCPConnection
@@ -1070,7 +1104,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             }
             
         }  
-        
+       
         if ($_ -match "The handshake failed due to an unexpected packet format" -and $tcpClient.Connected -and $proxyUrl){
                 Write-Output "`nIMPORTANTt: Proxy was specified so DNS resolution is done through the proxy.  Therefore DNS errors are difficult to trace through a proxy - so use deduction to troubleshoot...`n"
                 Write-Output "`nError Detected - Likelyhood of DNS error is high.`n`n---Potential Remediation(fix)--- `nPlease check the following:`n1) Verify that the $fqdn is correct (is it misspelled? does the URL exist?)`n2) Verify that the proxy server can resolve the URL (check from the proxy itself using nslookup, for example: nslookup $fqdn)`n3) Verify that the IP returned/resolved from checking on the proxy server is correct"
@@ -1103,12 +1137,20 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
          
             # If initial TCP was successful, but the connection was closed during TLS handshake, then the firewall will show 'allow' on tcp but denied the rest of the connection.  This would be Firewall configuration issue.
             if ($initialTCPConnection) {
-                Write-Output "TCP connection was initially allowed, but the connection was terminated.  This indicates the TLS secure connection was blocked to $fqdn but initial TCP connection was allowed.  Company/User that deployed firewall/proxy (and/or other network blocker) should investigate internally to determine why the TLS connection was blocked from this machine.`n"
+                Write-Output "TCP connection was initially allowed, but the connection was terminated.  This indicates the TLS secure connection was blocked to $fqdn but initial TCP connection was allowed.  This is normal if a firewall is using URL filtering for allow lists, and this URL is NOT whitelisted.  Company/User that deployed firewall/proxy (and/or other network blocker) should investigate internally to determine why the TLS connection was blocked from this machine and whitelist the URL.`n"
                 Write-Output "--Potential Remediation(fix)-- Allow/whitelist the URL '$fqdn' on the firewall and/or other network blockers and try this script again.`n"
                 write-output "--Potential Remediation(fix)-- Should this connection be using a proxy to connect?  If so, use the proxy argument ( -proxyUrl 'http://yourproxy.com:portnumber') and run the script again.`n"
             }
+            
             if (!$proxyUrl){
                 $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS
+                foreach ($ResolvedDnsIP in $ResolvedDns){
+                    if ($ResolvedDnsIP.IpAddress -eq "0.0.0.0"){
+                        $IsBlackHoleRoute = $true
+                        "BLACKHOLEDNS VALUE IS THIS:"
+                        $IsBlackHoleRoute
+                    }
+                }
             }
             
             if ($ErrorDns -match "DNS name does not exist" -and $_ -match "A connection attempt failed because the connected party did not properly respond") {
@@ -1129,12 +1171,21 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
                 }
             }
             if ($ErrorDns -match "No DNS servers configured for local system") {
-                write-output "Cannot reach a DNS server.  Check network settings"
+                Write-Output "Cannot reach a DNS server.  Check network settings"
             }
-            if (($ResolvedDns -notmatch 0.0.0.0) -and ($ResolvedDns)) {
+
+############
+
+            if (!$IsBlackHoleRoute -and ($ResolvedDns -and (!$initialTCPConnection -or !$initialProxyTCPConnection))) {
                 Write-Warning "Initial TCP Connection Failed!`n1) Is the HostName or IP,and port correct/valid?`n2) Check if local network is connected`n3) Verify if any network blockers are preventing the connection to $fqdn"
                 write-warning "TLS Session: No attempt to create TLS session because initial TCP connection failed."
             }
+
+            if (!$initialTCPConnection -and $_ -match "No connection could be made because the target machine actively refused it"){
+                Write-Output "TCP connection was actively blocked - the connection was reset by either a firewall, blocker, or the endpoint.  With internal network team, verify that the firewall is resetting the connection."
+            }
+
+
             #$ResolvedDNS = Resolve-DnsName $fqdn
             if ($_ -match "no data of the requested type was found") {
                 #Write-Output "Check ciphers - do cipher suites enabled on this machine match the endpoint's ($fqdn) allowed cipher suites?) <-- Can check using ssllabs.com"
@@ -1148,14 +1199,15 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             #    
             #    Write-Output "`n---Potential Remediation(fix)--- `n** The connection was refused by the proxy host or the proxy host does not exist.`n1) Check if this machine is allowed (has permission) to access the proxy AND verify that the proxy can access the URL ($fqdn)`n"
             #}
-            if (($ResolvedDNS -match 0.0.0.0) -and ($ResolvedDNS) -and ($_ -match "host has failed to respond")) {
+            
+            if ($IsBlackHoleRoute -and ($ResolvedDNS) -and ($_ -match "host has failed to respond")) {
                 Write-Output "Timeout occured.  Is the IP address or fqdn and associated port ($port) correct?"
                 if ($proxyUrl){
                     Write-Output "Since a proxy was specified, check if the proxy is reachable and if the proxy can access the URL ($fqdn)"
                 }
             }
-            elseif (($ResolvedDNS -match 0.0.0.0) -and ($ResolvedDNS) -and (!$initialProxyTCPConnection -and !$initialTCPConnection)) {
-                Write-Output "`n`n--Potential Remediation(fix)--`nDNS resolved $fqdn IP to: 0.0.0.0 - `n`nResolving DNS name to 0.0.0.0 IP address usually indicates `n1) Network blocking (DNS Blackhole/Sinkhole, firewall, or proxy blocker)`n   example of DNS blackhole: piHole, Adblock, or other DNS blackhole/sinkhole solution`n3) No network connection`n  `n`nPotential Solutions(Fixes): `n1) Check if this local machine is connected to a network `n2) Allow/Whitelist $fqdn on all network blockers (Firewall, Proxy, DNS blackhole, and any other blocker) and try running the script again. `n3) Check hosts file (C:\Windows\System32\Drivers\etc\hosts) `nExample: Is $fqdn listed in the hosts file? If so, is the IP correct?"`n
+            elseif ($IsBlackHoleRoute -and ($ResolvedDNS) -and (!$initialProxyTCPConnection -and !$initialTCPConnection)) {
+                Write-Output "`n`n--Warning--`nDNS resolved $fqdn IP to: 0.0.0.0 `n`nResolving DNS name to 0.0.0.0 IP address usually indicates: `n1) Network blocking (DNS Blackhole/Sinkhole, firewall, or proxy blocker)`n   example of DNS blackhole: piHole, Adblock, or other DNS blackhole/sinkhole solution`n3) No network connection`n  `n`nPotential Solutions(Fixes): `n1) Check if this local machine is connected to a network `n2) Allow/Whitelist $fqdn on all network blockers (Firewall, Proxy, DNS blackhole, and any other blocker) and try running the script again. `n3) Check hosts file (C:\Windows\System32\Drivers\etc\hosts) `nExample: Is $fqdn listed in the hosts file? If so, is the IP correct?"`n
             } 
           
               
@@ -1245,4 +1297,4 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 #Test-TlsConnection "microsoft.com"
 
 ## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
-#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
+#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net", "google.ca" -port 443
