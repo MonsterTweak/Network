@@ -90,6 +90,8 @@ function Test-TlsConnection {
        
         # Remove protocol portion of URL (http or https) if used 
             $fqdn = $fqdn -replace '^https?://', ''
+        # Remove any trailing slashes or paths after the FQDN
+            $fqdn = $fqdn -split '/' | Select-Object -First 1
         # Create a custom object to display fundamental information
             $ConnectionResults = New-Object PSObject -Property @{
             ConnectionSuccessfull             = $null
