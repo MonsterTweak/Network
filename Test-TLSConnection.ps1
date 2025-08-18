@@ -1109,7 +1109,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
        
         if ($_ -match "The handshake failed due to an unexpected packet format" -and $tcpClient.Connected -and $proxyUrl){
                 Write-Output "`nIMPORTANTt: Proxy was specified so DNS resolution is done through the proxy.  Therefore DNS errors are difficult to trace through a proxy - so use deduction to troubleshoot...`n"
-                Write-Output "`nError Detected - Likelyhood of DNS error is high.`n`n---Potential Remediation(fix)--- `nPlease check the following:`n1) Verify that the $fqdn is correct (is it misspelled? does the URL exist?)`n2) Verify that the proxy server can resolve the URL (check from the proxy itself using nslookup, for example: nslookup $fqdn)`n3) Verify that the IP returned/resolved from checking on the proxy server is correct"
+                Write-Output "`nError Detected.`n`n---Potential Remediation(fix)--- `nPlease check the following:`n1) Verify that the $fqdn is correct (is it misspelled? does the URL exist?)`n2) Verify that the proxy server can resolve the URL (check from the proxy itself using nslookup, for example: nslookup $fqdn)`n3) Verify that the IP returned/resolved from checking on the proxy server is correct"
                 # Check DNS locally as an extra test - if the machine can resolve the IP of the URL from this machine, then it's more likely that there is a issue on the proxy server regarding DNS (the DNS server the proxy uses may be offline, or further DNS problem).
                 Write-Output "`n`n***EXTRA TEST: Checking local machine DNS (instead of proxy) - can this local machine resolve $fqdn to an IP address?"
                 $ResolvedDns = Resolve-DnsName $fqdn -ErrorAction SilentlyContinue -ErrorVariable ErrorDNS
@@ -1178,7 +1178,7 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 ############
 
-            if (!$IsBlackHoleRoute -and ($ResolvedDns -and (!$initialTCPConnection -or !$initialProxyTCPConnection))) {
+            if (!$IsBlackHoleRoute -and ($ResolvedDns -and (!$initialTCPConnection -and !$initialProxyTCPConnection))) {
                 Write-Warning "Initial TCP Connection Failed!`n1) Is the HostName or IP,and port correct/valid?`n2) Check if local network is connected`n3) Verify if any network blockers are preventing the connection to $fqdn"
                 write-warning "TLS Session: No attempt to create TLS session because initial TCP connection failed."
             }
@@ -1300,3 +1300,5 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 
 ## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
 #Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net", "google.ca" -port 443
+
+test-tlsconnection ws.microsoft.com
