@@ -1,7 +1,7 @@
 ## ########################################################### Check if you have latest version! https://raw.githubusercontent.com/MonsterTweak/Network/refs/heads/main/Test-TLSConnection.ps1
-## Created by Robert Janes    Last Modified 18 August 2025
+## Created by Robert Janes    Last Modified 02 February 2026
 ##
-## Beta version 1.05
+## Beta version 1.08
 ## Network TCP/TLS troubleshoot engine to provide some troubleshooting information and display some recommendations based on findings.
 
 <#
@@ -73,9 +73,15 @@ function Test-TlsConnection {
             $CRTUrlsFailedList = @()
             $CRLurlsarraytemp = @()
             $Crturlsarraytemp = @()
-            
-            
-            $summary = new-object -TypeName psobject -Property @{
+
+       
+        # Remove protocol portion of URL (http or https) if used 
+            $fqdn = $fqdn -replace '^https?://', ''
+        # Remove any trailing slashes or paths after the FQDN
+            $fqdn = $fqdn -split '/' | Select-Object -First 1
+
+        # Create custom object to display summary at the end of the script (ouput to console at end of script)
+        $summary = new-object -TypeName psobject -Property @{
                 FQDN       = [String]@()
                 PORT       = [String]@()
                 TCPSuccess = [boolean]@()
@@ -86,12 +92,8 @@ function Test-TlsConnection {
             $summary.PORT=$port
             $summary.IPs = $null
             $remoteIP = $null
-            
-       
-        # Remove protocol portion of URL (http or https) if used 
-            $fqdn = $fqdn -replace '^https?://', ''
-        # Remove any trailing slashes or paths after the FQDN
-            $fqdn = $fqdn -split '/' | Select-Object -First 1
+
+
         # Create a custom object to display fundamental information
             $ConnectionResults = New-Object PSObject -Property @{
             ConnectionSuccessfull             = $null
@@ -1128,12 +1130,16 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             #proxy check for the same occurs earlier so it's not checked here.
             #Check if the initial TCP connection was successful, but the connection was closed during TLS handshake, then the firewall will show 'allow' on tcp but denied the rest of the connection.  This would be Firewall configuration issue.
             if (!$tcpClient.Connected -and !$initialTCPConnection -and !$proxyUrl){
-            Write-Output "TCP Connection Failed"
+                Write-Output "TCP Connection Failed"
             }
             if (!$tcpClient.Connected -and $initialTCPConnection) {
-            Write-Output "TCP Connection was interrupted"
+                Write-Output "TCP Connection was interrupted"
             
             $summary.IPs = $tcpClient.Client.RemoteEndPoint
+            }
+
+            if ($_ -match "An existing connection was forcibly closed by the remote host"){
+                write-output "Issue Detected: Connection was forcibly closed`n"
             }
 
          
@@ -1226,11 +1232,18 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
             #$certInfo | Format-List -Property Subject, Issuer, FriendlyName, NotBefore, NotAfter, Thumbprint
         }
 
+          if (($_ -match "established connection failed because connected host has failed to respond" -and $_ -match "A connection attempt failed because the connected party did not properly respond after a period of time") -and ($initialTCPConnection -eq $true -or $initialProxyTCPConnection -eq $true)){
+        write-output "ISSUE FOUND:`nTCP connection was successful but connection was terminated because there was no response during TLS handshake (packets dropped by network blocker such as firewall or proxy is the usual cause).  This indicates that a 'firewall or network blocker' is likely configured with URL filtering and the URL $fqdn is not whitelisted. The firewall, in this scenario, would be configured to drop packets from unwhitelisted URLs, rather than denying or resetting packets`n"
+        Write-Output "`n--Potential Remediation(fix)--- `n  To resolve, contact your internal network team to whitelist the URL on any network blockers. Once completed task, run script again.`n"
+        Write-Output "Error can occur when the Server is reset, but the client is not - This may be a setting on the firewall that is resetting the server only, thus the connection fails because the machine (client) recieves no response`n" | Add-Content $logFailuresPath -Encoding UTF8
+        }
+
+
         Write-Warning "Failed to connect to: $($fqdn):$port - $($_.Exception.Message)`n"
       
         ##LOGGING
         write-output "Failed to connect to: $($fqdn):$port - $($_.Exception.Message)" | Add-Content $logFailuresPath -Encoding utf8
-        #$_
+        $_
         write-output $_ | Add-Content $logFailuresPath -Encoding utf8
 
         ## Check if cert is expired and comment.
@@ -1299,4 +1312,11 @@ UTC Time (24-hour): $((Get-Date).ToUniversalTime().ToString('MMM dd yyyy HH:mm')
 #Test-TlsConnection "microsoft.com"
 
 ## EXAMPLE using multiple endpoints (only one port can be specified for all endpoints, for now, if multiple endoints are specified)
-#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","eastus-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net", "google.ca" -port 443
+#Test-TlsConnection "agentserviceapi.guestconfiguration.azure.com","canadacentral-gas.guestconfiguration.azure.com","gbl.his.arc.azure.com", "cc.his.arc.azure.com", "login.microsoftonline.com","management.azure.com","pas.windows.net" -port 443
+
+Test-Tlsconnection "microsoft.com"
+
+
+
+
+
